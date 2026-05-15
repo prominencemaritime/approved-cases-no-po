@@ -1,0 +1,475 @@
+#src/formatters/html_formatter.py
+"""
+HTML email formatter with rich styling and company branding.
+
+Generates professional HTML emails with embedded logos, tables,
+and responsive design.
+"""
+from typing import Dict, Optional
+import pandas as pd
+from datetime import datetime
+from src.formatters.date_formatter import duration_hours
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class HTMLFormatter:
+    """
+    Generates HTML email content with company branding.
+    """
+    
+    def _render_cell(self, column_name: str, value: any, row: pd.Series, enable_links: bool) -> str:
+        """
+        Render table cell with optional link for document_name column.
+
+        Args:
+            column_name: Name of the column being rendered
+            value: Cell value to display
+            row: Complete row data (for accessing document_url if needed)
+            enable_links: Whether links are enabled
+
+        Returns:
+            HTML string for table cell content
+        """
+        # Convert value to string, handle None/NaN
+        if pd.isna(value):
+            display_value = ''
+        else:
+            display_value = str(value)
+
+        # Render priority column as a styled badge
+        if column_name == 'priority':
+            if display_value == 'OVERDUE':
+                return '<span class="badge badge-overdue">Overdue</span>'
+            elif display_value == 'SOON DUE':
+                return '<span class="badge badge-soon-due">Soon Due</span>'
+            return display_value
+
+        # Make requisition_id clickable if links are enabled
+        if column_name == 'case_id' and enable_links:
+            if 'url' in row.index and pd.notna(row['url']):
+                url = row['url']
+                return f'<a href="{url}" style="color: #0066cc; text-decoration: none;">{display_value}</a>'
+
+        # Regular cell - no link
+        return display_value
+
+    def format(self, df: pd.DataFrame, run_time: datetime, config: 'AlertConfig', metadata: Optional[Dict] = None, enable_links: bool = False) -> str:
+        """
+        Generate HTML email content from DataFrame.
+        
+        Args:
+            df: DataFrame with data to display
+            run_time: Timestamp of this alert run
+            config: AlertConfig instance for accessing settings
+            metadata: Optional metadata (e.g., vessel_name, alert_title)
+            enable_links: Whether to make column names clickable
+            
+        Returns:
+            HTML string for email body
+        """
+        if metadata is None:
+            metadata = {}
+        
+        # Extract metadata with defaults
+        alert_title = metadata.get('alert_title', 'Alert Notification')
+        vessel_name = metadata.get('vessel_name', '')
+        company_name = metadata.get('company_name', 'Prominence Maritime S.A.')
+        
+        # Determine which logos are available
+        logos_html = self._build_logos_html(config)
+        
+        # Build the HTML
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+    body {{
+        font-family: Tahoma, Verdana, "Segoe UI", Roboto, Arial, sans-serif;
+        font-size: 13px;
+        background-color: #f9fafc;
+        color: #333;
+        line-height: 1.6;
+        margin: 0;
+        padding: 0;
+    }}
+    .container {{
+        max-width: 1200px;
+        width: 95%;
+        margin: 30px auto;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        overflow: hidden;
+    }}
+    .table-wrapper {{
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 20px 0;
+    }}
+    .header {{
+        background-color: #0B4877;
+        color: white;
+        padding: 20px 30px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+    }}
+    .header-logos {{
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }}
+    .header-logos img {{
+        max-height: 50px;
+        vertical-align: middle;
+    }}
+    .header-text {{
+        text-align: right;
+    }}
+    .header h1 {{
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+    }}
+    .header p {{
+        margin: 5px 0 0 0;
+        font-size: 14px;
+        color: #d7e7f5;
+    }}
+    .content {{
+        padding: 30px;
+    }}
+    .metadata {{
+        background-color: #f5f8fb;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        padding: 15px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        border-radius: 8px;
+        font-size: 13px;
+        border-left: 4px solid #2EA9DE;
+    }}
+    .metadata-row {{
+        margin: 8px 0;
+    }}
+    .metadata-label {{
+        font-weight: 600;
+        color: #0B4877;
+        display: inline-block;
+        min-width: 100px;
+    }}
+    .count-badge {{
+        display: inline-block;
+        background-color: #2EA9DE;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 600;
+    }}
+    table {{
+        width: 100%;
+        min-width: 400px;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 13px;
+        font-family: Tahoma, Verdana, "Segoe UI", Roboto, Arial, sans-serif;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }}
+    th {{
+        background-color: #0B4877;
+        color: white;
+        text-align: left;
+        padding: 12px;
+        font-weight: 600;
+        min-width: 80px;
+        word-wrap: break-word;
+    }}
+    td {{
+        padding: 10px 12px;
+        border-bottom: 1px solid #e0e6ed;
+        min-width: 80px;
+        word-wrap: break-word;
+    }}
+    th:first-child, td:first-child {{
+        min-width: 80px;
+    }}
+    tr:nth-child(even) {{
+        background-color: #f5f8fb;
+    }}
+    tr:hover {{
+        background-color: #eef5fc;
+    }}
+    a {{
+        color: #2EA9DE;
+        text-decoration: none;
+    }}
+    a:hover {{
+        text-decoration: underline;
+    }}
+    .footer {{
+        font-size: 12px;
+        color: #888;
+        text-align: center;
+        padding: 20px;
+        border-top: 1px solid #eee;
+        background-color: #f9fafc;
+    }}
+    .badge {{
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+    }}
+    .badge-overdue {{
+        background-color: #fde8e8;
+        color: #c0392b;
+        border: 1px solid #e74c3c;
+    }}
+    .badge-soon-due {{
+        background-color: #fff3e0;
+        color: #e65100;
+        border: 1px solid #fb8c00;
+    }}
+    .no-data {{
+        text-align: center;
+        padding: 40px;
+        color: #666;
+        font-size: 16px;
+    }}
+    @media only screen and (max-width: 500px) {{
+        .container {{
+            width: 98%;
+            margin: 10px auto;
+            border-radius: 8px;
+        }}
+        .header {{
+            flex-direction: column;
+            text-align: center;
+            padding: 15px;
+        }}
+        .header-text {{
+            text-align: center;
+            margin-top: 15px;
+        }}
+        .content {{
+            padding: 15px;
+        }}
+        body {{
+            font-size: 13px
+        }}
+        table {{
+            font-size: 13px;
+            min-width: 500px;
+        }}
+        th, td {{
+            padding: 8px;
+            min-width: 60px;
+            font-size: 13px;
+        }}
+    }}
+    @media only screen and (max-width: 400px) {{
+        .metadata {{ font-size: 12px; }}
+        .container {{
+            width: 98%;
+            margin: 10px auto;
+            border-radius: 8px;
+        }}
+        .header {{
+            flex-direction: column;
+            text-align: center;
+            padding: 15px;
+        }}
+        .header-text {{
+            text-align: center;
+            margin-top: 15px;
+        }}
+        .content {{
+            padding: 15px;
+        }}
+        body {{
+            font-size: 12px
+        }}
+        table {{
+            font-size: 13px;
+            min-width: 400px;
+        }}
+        th, td {{
+            padding: 8px;
+            min-width: 60px;
+            font-size: 12px;
+        }}
+    }}
+    @media only screen and (max-width: 300px) {{
+        .metadata {{ font-size: 11px; }}
+        .container {{
+            width: 100%;
+            margin: 0;
+            border-radius: 0;
+        }}
+        body {{
+            font-size: 11px;
+        }}
+        table {{
+            min-width: 300px;
+        }}
+        th, td {{
+            padding: 6px;
+            min-width: 50px;
+            font-size: 11px;
+        }}
+    }}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="header-logos">
+            {logos_html}
+        </div>
+        <div class="header-text">
+            <h1>{alert_title}</h1>
+            {f'<p>{vessel_name}</p>' if vessel_name else ''}
+            <p>{run_time.strftime('%A, %d %B %Y • %H:%M %Z')}</p>
+        </div>
+    </div>
+    
+    <div class="content">
+"""
+
+        if df.empty:
+            html += """
+        <div class="no-data">
+            <p><strong>No records found for the current query.</strong></p>
+        </div>
+"""
+        else:
+            if config.include_grey_metadata_section:
+                # Add grey metadata section
+                html += f"""
+                <div class="metadata">
+                    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                """
+
+                # Specify grey metadata entries to be included here:
+                grey_metadata_entries = {
+                        "Report Generated": run_time.strftime('%A, %B %d, %Y at %H:%M %Z'), 
+                        "Schedule Frequency": duration_hours(config.schedule_frequency_hours) if getattr(config, "schedule_frequency_hours", None) else None, 
+                        "Records Found": f'<span class="count-badge">{len(df)}</span>'
+                }
+
+                for label, value in grey_metadata_entries.items():
+                    if value is not None:
+                        html += f"""
+                        <tr>
+                            <td style="font-weight: 600; color: #0B4877; padding: 4px 0; width: 180px;">
+                                {label}:
+                            </td>
+                            <td style="padding: 4px 0;">
+                                {value}
+                            </td>
+                        </tr>
+                        """
+
+                html += f"""
+                    </table>
+                </div>
+                """
+
+                # Add body text
+                html += f"""
+        <div style="background-color: #fff; padding: 20px; border-left: 4px solid #2EA9DE; margin-bottom: 10px; line-height: 1.8;">
+            <p style="margin: 0 0 10px 0;">The following {len(df)} ORCA purchase cases are approved but still lack a <strong>purchase order confirmation</strong>. Please navigate to the case (click on the <strong>case id</strong> of interest in the following table), press <strong>Click here</strong> under the approved Supplier and select ‘<strong>Dispatch the Purchase Order to the Supplier</strong>’.</p>
+        </div>
+"""
+
+            # Determine which columns to display in main table
+            display_columns = metadata.get('display_columns', list(df.columns))
+            # Filter to only columns that exist in the dataframe
+            display_columns = [col for col in display_columns if col in df.columns]
+
+            # Build table
+            html += """
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+"""
+            _display_name_overrides = {
+                'amount_usd': 'USD',
+                'invoice_created_at_ts': 'Created At'
+            }
+
+            # Add column headers (only for display columns)
+            for col in display_columns:
+                display_name = _display_name_overrides.get(col, col.replace('_', ' ').title())
+                html += f"                    <th>{display_name}</th>\n"
+
+            html += """                </tr>
+            </thead>
+            <tbody>
+"""
+
+            # Add data rows (only display columns)
+            for idx, row in df.iterrows():
+                html += "                <tr>\n"
+                for col in display_columns:
+                    # Use _render_cell to handle links
+                    cell_content = self._render_cell(
+                        column_name=col,
+                        value=row[col],
+                        row=row,
+                        enable_links=enable_links
+                    )
+                    html += f"                    <td>{cell_content}</td>\n"
+                html += "                </tr>\n"
+
+            html += """            </tbody>
+        </table>
+        </div>
+"""
+
+        # Footer
+        html += f"""
+    </div>
+    
+    <div class="footer">
+        <p>This is an automated notification from {company_name}.</p>
+        <p>If you have questions, please contact your system administrator.</p>
+    </div>
+</div>
+</body>
+</html>
+"""
+        
+        return html
+    
+
+    def _build_logos_html(self, config: 'AlertConfig') -> str:
+        """
+        Build HTML for company logos based on which are available.
+        
+        Args:
+            config: AlertConfig instance
+            
+        Returns:
+            HTML string with img tags for available logos
+        """
+        logos_html = ""
+        
+        for company_name, logo_path in config.company_logos.items():
+            if logo_path.exists():
+                # CID format matches what EmailSender uses
+                cid = f"{company_name}_logo"
+                logos_html += f'<img src="cid:{cid}" alt="{company_name} logo">\n            '
+        
+        return logos_html.strip()
