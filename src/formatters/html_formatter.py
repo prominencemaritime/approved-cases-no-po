@@ -387,7 +387,7 @@ class HTMLFormatter:
 
                 # Add body text
                 html += f"""
-        <div style="background-color: #fff; padding: 20px; border-left: 4px solid #2EA9DE; margin-bottom: 10px; line-height: 1.8;">
+        <div style="background-color: #fff; padding: 20px; border-left: 4px solid #2EA9DE; margin-bottom: 0px; line-height: 1.8;">
             <p style="margin: 0 0 10px 0;">The following {len(df)} ORCA purchase cases are approved but still lack a <strong>purchase order confirmation</strong>. Please navigate to the case (click on the <strong>case id</strong> of interest in the following table), press <strong>Click here</strong> under the approved Supplier and select ‘<strong>Dispatch the Purchase Order to the Supplier</strong>’.</p>
         </div>
 """
