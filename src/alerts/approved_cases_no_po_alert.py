@@ -2,14 +2,16 @@
 """Approved Cases No PO Alert Implementation.""" 
 from typing import Dict, List, Optional
 import pandas as pd 
-from datetime import datetime, timedelta 
-from zoneinfo import ZoneInfo
 from sqlalchemy import text
 import logging
  
 from src.core.base_alert import BaseAlert 
 from src.core.config import AlertConfig 
-from src.db_utils import get_db_connection, validate_query_file, query_to_df
+from src.db_utils import get_db_connection, validate_query_file
+from src.utils.get_department_emails import (
+    departments_from_category_codes,
+    get_emails,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -55,9 +57,6 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                 - rqn_status: str
                 - is_approved: bool
                 - created_by: str
-                - updated_by: str
-                - department_primary_email: str
-                - department: str
                 - updated_at: datetime
 
         Logging:
@@ -76,15 +75,63 @@ class ApprovedCasesNoPOAlert(BaseAlert):
 
         self.logger.info(f"ApprovedCasesNoPOAlert.fetch_data() is returning a df with {len(df_vessel)} rows")
 
-        missing_emails = df_vessel[df_vessel['department_primary_email'].isna()]
-        if not missing_emails.empty:
+        df_vessel = self._enrich_with_departments(df_vessel)
+
+        unrouted = df_vessel[df_vessel['department'].isna()]
+        if not unrouted.empty:
             self.logger.warning(
-                f"No email mapping found for {missing_emails['department'].nunique()} "
-                f"department(s): {missing_emails['department'].unique().tolist()} -- "
+                f"{len(unrouted)} row(s) could not be mapped to a department "
+                f"from category_codes {unrouted['category_codes'].unique().tolist()} -- "
                 f"these will be skipped during routing"
             )
 
         return df_vessel
+
+
+    def _enrich_with_departments(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Resolve department and recipient emails from the aggregated category codes.
+
+        A requisition whose items span several departments is exploded into one
+        row per department, so each department receives only its own rows. Rows
+        with no resolvable department become a single row with department=NaN
+        and are dropped later in route_notifications with a warning.
+        """
+        if df.empty:
+            for col in ('department', 'primary_email', 'secondary_email'):
+                df[col] = pd.Series(dtype='object')
+            return df
+
+        df = df.copy()
+        df['department'] = df['category_codes'].apply(departments_from_category_codes)
+
+        multi = df['department'].apply(len) > 1
+        if multi.any():
+            self.logger.info(
+                f"{int(multi.sum())} requisition(s) span multiple departments "
+                f"and will be routed to each"
+            )
+
+        # Empty lists explode to a single NaN row, preserving visibility
+        df = df.explode('department', ignore_index=True)
+
+        def _lookup(department):
+            if pd.isna(department):
+                return pd.Series({'primary_email': None, 'secondary_email': None})
+            try:
+                de = get_emails(department)
+            except Exception as e:
+                self.logger.warning(f"No emails for department '{department}': {e}")
+                return pd.Series({'primary_email': None, 'secondary_email': None})
+            return pd.Series({'primary_email': de.primary, 'secondary_email': de.secondary})
+
+        df[['primary_email', 'secondary_email']] = df['department'].apply(_lookup)
+
+        self.logger.info(
+            f"Enriched to {len(df)} row(s) across "
+            f"{df['department'].nunique(dropna=True)} department(s)"
+        )
+        return df
 
 
     def filter_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -98,13 +145,14 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                     case_id: str
                     description: str
                     categories: str
+                    category_codes: str
                     supplier: str
                     rqn_status: str
                     is_approved: bool
                     created_by: str
-                    updated_by: str
-                    department_primary_email: str
                     department: str
+                    primary_email: str
+                    secondary_email: str
                     updated_at: datetime
 
 
@@ -115,6 +163,8 @@ class ApprovedCasesNoPOAlert(BaseAlert):
         """
         if df.empty:
             return df
+
+        df = df.copy()
 
         # Timezone awareness
         df['updated_at'] = pd.to_datetime(df['updated_at'])
@@ -190,13 +240,14 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                     case_id: str
                     description: str
                     categories: str
+                    category_codes: str
                     supplier: str
                     rqn_status: str
                     is_approved: bool
                     created_by: str
-                    updated_by: str
-                    department_primary_email: str
                     department: str
+                    primary_email: str
+                    secondary_email: str
                     updated_at: datetime
 
         Returns:
@@ -221,10 +272,9 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                 f"{len(dept_df)} record(s)"
             )
 
-            # Determine cc recipients
-            primary_email = dept_df['department_primary_email'].iloc[0]
+            primary_email = dept_df['primary_email'].iloc[0]
+            secondary_email = dept_df['secondary_email'].iloc[0]
 
-            # Skip departments with no email configured
             if pd.isna(primary_email) or not primary_email:
                 self.logger.warning(
                     f"No primary email for department '{department}' -- "
@@ -232,16 +282,20 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                 )
                 continue
 
-            # Build to recipients: primary + secondary (if present)
             to_recipients = [primary_email]
+            if pd.notna(secondary_email) and secondary_email:
+                to_recipients.append(secondary_email)
+
             self.logger.info(
-                f"Department '{department}': primary={primary_email}, "
-                f"no secondary email"
-            )
+                f"Department '{department}': to={to_recipients}"
+                )
 
             # CC recipients: fixed internal list from config
             routing = self.config.email_routing.get('prominencemaritime.com', {})
             cc_recipients = routing.get('cc', []) + self.config.internal_recipients
+            cc_recipients = [
+                e for e in dict.fromkeys(cc_recipients) if e not in to_recipients
+            ]
 
             # URL
             dept_df = dept_df.copy()
@@ -259,7 +313,6 @@ class ApprovedCasesNoPOAlert(BaseAlert):
                     'supplier',
                     'rqn_status',
                     'created_by',
-                    'updated_by',
                     'updated_at'
             ]
 
@@ -337,17 +390,18 @@ class ApprovedCasesNoPOAlert(BaseAlert):
             List of required column names
         """
         return [
-                    'requisition_id',
-                    'vessel',
-                    'case_id',
-                    'description',
-                    'categories',
-                    'supplier',
-                    'rqn_status',
-                    'is_approved',
-                    'created_by',
-                    'updated_by',
-                    'department_primary_email',
-                    'department',
-                    'updated_at'
+            'requisition_id',
+            'vessel',
+            'case_id',
+            'description',
+            'categories',
+            'category_codes',
+            'supplier',
+            'rqn_status',
+            'is_approved',
+            'created_by',
+            'department',
+            'primary_email',
+            'secondary_email',
+            'updated_at',
         ]

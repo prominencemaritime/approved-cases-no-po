@@ -10,3 +10,4 @@ LEFT JOIN
     ON dse.department_id = d.id
 WHERE 
     d.email IS NOT NULL
+    AND d.name = :department_name

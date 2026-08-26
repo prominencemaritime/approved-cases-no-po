@@ -5,6 +5,7 @@ WITH base AS (
 		pr.code AS case_id,
 		pr.description,
 		STRING_AGG(DISTINCT pc.name, ', ') AS categories,
+   		STRING_AGG(DISTINCT SPLIT_PART(pc.name, '-', 1), '|') AS category_codes,
 		STRING_AGG(DISTINCT RTRIM(suppliers.full_name, ' *'), ', ') AS supplier,
 		prs.name AS rqn_status,
 		--prs.label AS rqn_status_label,
@@ -34,10 +35,6 @@ WITH base AS (
 	        ELSE false
 	    END AS is_approved,
 		p_created_by.full_name AS created_by,
-		p_updated_by.full_name AS updated_by,
-		--p_updated_by.id AS updated_by_id,
-		d.email AS department_primary_email,
-        d.name AS department,
 		--pr.created_at AS created_at,
 		pr.updated_at AS updated_at
 	FROM purchasing_requisitions                                pr
@@ -51,12 +48,6 @@ WITH base AS (
 	    ON prsu.requisition_id = pr.id
 	LEFT JOIN parties                                           suppliers
 	    ON suppliers.id = prsu.supplier_id
-	LEFT JOIN parties                                           p_updated_by
-	    ON p_updated_by.id = pr.updated_by_id
-	LEFT JOIN department_parties								dp
-        ON dp.party_id = p_updated_by.id
-    LEFT JOIN departments										d
-        ON d.id = dp.department_id
 	LEFT JOIN vessels                                           v
 	    ON v.id = pr.vessel_id
 	LEFT JOIN parties											p_created_by
@@ -77,10 +68,6 @@ WITH base AS (
 	    pr.code,
 	    prs.name,
 	    prs.label,
-	    p_updated_by.full_name,
-		p_updated_by.id,
-		d.email,
-        d.name,
 		p_created_by.full_name
 	ORDER BY pr.id DESC
 )
