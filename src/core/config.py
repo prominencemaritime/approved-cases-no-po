@@ -43,6 +43,7 @@ class AlertConfig:
     # Company-specific email routing
     email_routing: Dict[str, Dict[str, List[str]]]  # domain -> {to: [...], cc: [...]}
     internal_recipients: List[str]
+    excluded_recipient_domains: List[str]
 
     # Feature flags
     enable_email_alerts: bool
@@ -139,6 +140,7 @@ class AlertConfig:
 
             email_routing=email_routing,
             internal_recipients=cls._parse_email_list('INTERNAL_RECIPIENTS'),
+            excluded_recipient_domains=cls._parse_domain_list('EXCLUDED_RECIPIENT_DOMAINS'),
 
             # Feature flags
             enable_email_alerts=config('ENABLE_EMAIL_ALERTS', default=True, cast=bool),
@@ -209,6 +211,21 @@ class AlertConfig:
         """Parse comma-separated email list from environment variable."""
         raw = config(env_var, default='')
         return [s.strip() for s in raw.split(',') if s.strip()]
+
+    @staticmethod
+    def _parse_domain_list(env_var: str) -> List[str]:
+        """
+        Parse comma-separated domain list, normalised to lowercase.
+
+        A leading '@' is tolerated so both 'seatraders.com' and
+        '@seatraders.com' are accepted in .env.
+        """
+        raw = config(env_var, default='')
+        return [
+            s.strip().lstrip('@').lower()
+            for s in raw.split(',')
+            if s.strip().lstrip('@')
+        ]
 
     @staticmethod
     def _load_email_routing() -> Dict[str, Dict[str, List[str]]]:

@@ -129,6 +129,52 @@ class BaseAlert(ABC):
                 f"Available: {list(df.columns)}"
             )
 
+    def _filter_excluded_recipients(
+        self,
+        recipients: List[str],
+        label: str = "recipients",
+    ) -> List[str]:
+        """
+        Remove addresses whose domain is excluded by configuration.
+
+        Matches the domain exactly or as a parent of a subdomain, so
+        'seatraders.com' blocks 'a@seatraders.com' and 'a@mail.seatraders.com'
+        but not 'a@notseatraders.com'.
+
+        Args:
+            recipients: Email addresses to filter
+            label: Used only in log output, e.g. 'TO' or 'CC'
+
+        Returns:
+            The addresses that survive filtering, order preserved
+        """
+        excluded_domains = getattr(self.config, 'excluded_recipient_domains', None)
+        if not excluded_domains or not recipients:
+            return list(recipients)
+
+        kept, dropped = [], []
+        for address in recipients:
+            if not address or '@' not in address:
+                kept.append(address)
+                continue
+
+            domain = address.rsplit('@', 1)[1].strip().lower()
+            if any(
+                domain == excluded or domain.endswith(f".{excluded}")
+                for excluded in excluded_domains
+            ):
+                dropped.append(address)
+            else:
+                kept.append(address)
+
+        if dropped:
+            self.logger.info(
+                f"Excluded {len(dropped)} {label} address(es) by domain policy: "
+                f"{dropped}"
+            )
+
+        return kept
+
     @abstractmethod
     def get_required_columns(self) -> List[str]:
         """

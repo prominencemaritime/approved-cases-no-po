@@ -286,6 +286,15 @@ class ApprovedCasesNoPOAlert(BaseAlert):
             if pd.notna(secondary_email) and secondary_email:
                 to_recipients.append(secondary_email)
 
+            to_recipients = self._filter_excluded_recipients(to_recipients, label="TO")
+
+            if not to_recipients:
+                self.logger.warning(
+                    f"All recipients for department '{department}' are at excluded "
+                    f"domains -- skipping {len(dept_df)} record(s)"
+                )
+                continue
+
             self.logger.info(
                 f"Department '{department}': to={to_recipients}"
                 )
@@ -293,6 +302,7 @@ class ApprovedCasesNoPOAlert(BaseAlert):
             # CC recipients: fixed internal list from config
             routing = self.config.email_routing.get('prominencemaritime.com', {})
             cc_recipients = routing.get('cc', []) + self.config.internal_recipients
+            cc_recipients = self._filter_excluded_recipients(cc_recipients, label="CC")
             cc_recipients = [
                 e for e in dict.fromkeys(cc_recipients) if e not in to_recipients
             ]
